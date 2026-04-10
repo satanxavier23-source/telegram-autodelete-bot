@@ -5,9 +5,14 @@ from telebot import types
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
+if not BOT_TOKEN:
+    print("Token ഇല്ല ❌")
+    exit()
+
 bot = telebot.TeleBot(BOT_TOKEN)
 
-ADMIN_ID = 6630347046  # 👈 നിന്റെ user id ഇടണം
+# 👉 നിന്റെ ID ഇവിടെ set ചെയ്തിട്ടുണ്ട്
+ADMIN_ID = 6630347046
 
 replace_photo = None
 replace_mode = False
@@ -83,7 +88,7 @@ def photo_handler(msg):
 
     user_id = msg.from_user.id
 
-    # Set photo mode
+    # 👉 Set Photo mode
     if waiting_photo and user_id == ADMIN_ID:
         replace_photo = msg.photo[-1].file_id
         waiting_photo = False
@@ -97,12 +102,12 @@ def photo_handler(msg):
         bot.reply_to(msg, "Links ഇല്ല ❌")
         return
 
-    # Arrange links
+    # 👉 Arrange links
     result = "FULL VIDEO 👀🌸\n\n"
     for i, link in enumerate(links, 1):
         result += f"VIDEO {i} ⤵️\n{link}\n\n"
 
-    # Choose photo
+    # 👉 Choose photo
     if replace_mode and replace_photo:
         photo_id = replace_photo
     else:
