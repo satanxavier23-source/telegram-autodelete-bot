@@ -19,7 +19,7 @@ def extract_links(text):
 def start_handler(message):
     bot.reply_to(
         message,
-        "Send photo with text + links.\nഞാൻ text remove ചെയ്ത് links arrange ചെയ്ത് തിരിച്ച് അയക്കും ✅"
+        "Photo + text + links ഒറ്റ message ആയി അയക്കൂ.\nഞാൻ text remove ചെയ്ത് links arrange ചെയ്ത് photo-യോടൊപ്പം തിരിച്ച് അയക്കും ✅"
     )
 
 @bot.message_handler(content_types=['photo'])
@@ -38,8 +38,12 @@ def photo_handler(message):
         for i, link in enumerate(links, start=1):
             result += f"VIDEO {i} ⤵️\n{link}\n\n"
 
-        bot.send_photo(message.chat.id, photo_id)
-        bot.send_message(message.chat.id, result)
+        # photo + arranged links together
+        bot.send_photo(
+            chat_id=message.chat.id,
+            photo=photo_id,
+            caption=result
+        )
 
     except Exception as e:
         print("ERROR:", e)
