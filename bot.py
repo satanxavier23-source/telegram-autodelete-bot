@@ -11,9 +11,6 @@ if not BOT_TOKEN:
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# 👉 നിന്റെ ID ഇവിടെ set ചെയ്തിട്ടുണ്ട്
-ADMIN_ID = 6630347046
-
 replace_photo = None
 replace_mode = False
 waiting_photo = False
@@ -41,11 +38,6 @@ def start(msg):
 @bot.message_handler(func=lambda m: m.text == "Set Photo")
 def set_photo(msg):
     global waiting_photo
-
-    if msg.from_user.id != ADMIN_ID:
-        bot.reply_to(msg, "Admin only ❌")
-        return
-
     waiting_photo = True
     bot.reply_to(msg, "Photo അയക്കൂ 📸")
 
@@ -53,9 +45,6 @@ def set_photo(msg):
 @bot.message_handler(func=lambda m: m.text == "ON")
 def turn_on(msg):
     global replace_mode
-
-    if msg.from_user.id != ADMIN_ID:
-        return
 
     if not replace_photo:
         bot.reply_to(msg, "Photo set ചെയ്തിട്ടില്ല ❌")
@@ -68,10 +57,6 @@ def turn_on(msg):
 @bot.message_handler(func=lambda m: m.text == "OFF")
 def turn_off(msg):
     global replace_mode
-
-    if msg.from_user.id != ADMIN_ID:
-        return
-
     replace_mode = False
     bot.reply_to(msg, "OFF ആയി ❌")
 
@@ -86,10 +71,8 @@ def status(msg):
 def photo_handler(msg):
     global replace_photo, waiting_photo
 
-    user_id = msg.from_user.id
-
     # 👉 Set Photo mode
-    if waiting_photo and user_id == ADMIN_ID:
+    if waiting_photo:
         replace_photo = msg.photo[-1].file_id
         waiting_photo = False
         bot.reply_to(msg, "Saved ✅")
