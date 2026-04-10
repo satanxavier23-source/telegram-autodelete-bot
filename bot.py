@@ -1,52 +1,73 @@
-from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
-import os
+import telebot
 import re
+import threading
+import time
 
-TOKEN = os.getenv("TOKEN")
+BOT_TOKEN = "YOUR_BOT_TOKEN"
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Send photo or text with links 👀")
+bot = telebot.TeleBot(BOT_TOKEN)
 
-async def clean_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = ""
+user_data = {}
 
-    if update.message.text:
-        text = update.message.text
-    elif update.message.caption:
-        text = update.message.caption
+def extract_links(text):
+    return re.findall(r'https?://\S+', text)
 
-    if not text:
+def auto_send(user_id, chat_id):
+    time.sleep(10)
+
+    if user_id not in user_data:
         return
 
-    # find links
-    links = re.findall(r'https?://\S+', text)
+    data = user_data[user_id]
 
-    # remove links from text
-    normal_text = re.sub(r'https?://\S+', '', text).strip()
+    if len(data["links"]) == 0:
+        return
 
-    message = ""
+    new_links = "\n\nFULL VIDEO 👀🌸\n\n"
 
-    if normal_text:
-        message += normal_text + "\n\n"
+    for i, link in enumerate(data["links"]):
+        new_links += f"VIDEO {i+1} ⤵️\n{link}\n\n"
+
+    final_caption = data["text"] + new_links
+
+    bot.send_photo(
+        chat_id,
+        data["photo"],
+        caption=final_caption
+    )
+
+    del user_data[user_id]
+
+@bot.message_handler(content_types=['photo'])
+def photo_handler(message):
+
+    user_id = message.from_user.id
+
+    user_data[user_id] = {
+        "photo": message.photo[-1].file_id,
+        "text": message.caption if message.caption else "",
+        "links": []
+    }
+
+    bot.reply_to(message, "Send links now 🔗")
+
+    threading.Thread(
+        target=auto_send,
+        args=(user_id, message.chat.id)
+    ).start()
+
+@bot.message_handler(content_types=['text'])
+def text_handler(message):
+
+    user_id = message.from_user.id
+
+    if user_id not in user_data:
+        return
+
+    links = extract_links(message.text)
 
     if links:
-        message += "FULL VIDEO 👀🌸\n\n"
+        user_data[user_id]["links"].extend(links)
 
-        for i, link in enumerate(links, 1):
-            message += f"VIDEO {i} ⤵️\n{link}\n\n"
-
-    if update.message.photo:
-        photo = update.message.photo[-1].file_id
-        await update.message.reply_photo(photo=photo, caption=message)
-
-    else:
-        await update.message.reply_text(message)
-
-
-app = ApplicationBuilder().token(TOKEN).build()
-
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, clean_links))
-
-app.run_polling()
+print("Bot running...")
+bot.infinity_polling()
