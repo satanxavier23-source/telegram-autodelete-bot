@@ -7,6 +7,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 bot = telebot.TeleBot(BOT_TOKEN)
 
 ADMIN_IDS = [6630347046, 7194569468]
+user_settings = {}
 
 CHANNELS = {
     "Channel 1": "-1002674664027",
@@ -15,7 +16,7 @@ CHANNELS = {
     "Channel 4": "-1003590340901",
 }
 
-user_settings = {}
+PHOTO_SLOTS = ["Photo 1", "Photo 2", "Photo 3", "Photo 4", "Photo 5"]
 
 
 def is_admin(user_id):
@@ -25,10 +26,20 @@ def is_admin(user_id):
 def init_user(uid):
     if uid not in user_settings:
         user_settings[uid] = {
-            "text_link_mode": False,
+            "saved_photos": {
+                "Photo 1": None,
+                "Photo 2": None,
+                "Photo 3": None,
+                "Photo 4": None,
+                "Photo 5": None,
+            },
+            "selected_photo": None,
+            "link_mode": False,
+            "thumb_mode": False,
             "auto_forward": False,
             "selected_channels": [],
-            "current_photo": None,
+            "waiting_photo_slot": None,
+            "menu": "main",
         }
 
 
@@ -38,55 +49,29 @@ def extract_links(text):
     return re.findall(r'https?://\S+', text)
 
 
-def remove_links_from_text(text):
-    if not text:
-        return ""
-    return re.sub(r'https?://\S+', '', text).strip()
-
-
 def build_arranged_text(links):
     unique_links = []
     for link in links:
         if link not in unique_links:
             unique_links.append(link)
 
-    final_text = "FULL VIDEO 👀🌸\n\n"
+    final_text = "LINKS\n\n"
     for i, link in enumerate(unique_links, start=1):
-        final_text += f"VIDEO {i} ⤵️\n{link}\n\n"
-    return final_text.strip()
-
-
-def build_final_text(text, links):
-    arranged = build_arranged_text(links)
-    clean_text = remove_links_from_text(text)
-
-    if clean_text:
-        return f"{clean_text}\n\n{arranged}"
-    return arranged
+        final_text += f"ITEM {i}\n{link}\n\n"
+    return final_text
 
 
 def main_kb():
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.row("📝 Text + Link Arrange")
-    kb.row("📢 Select Channel")
-    kb.row("🟢 Auto Forward ON", "🔴 Auto Forward OFF")
-    kb.row("📢 Current Forward Channels", "📊 Current Settings")
+    kb.row("🔗 Link Arrangement")
+    kb.row("📊 Current Settings")
     kb.row("❓ Help")
     return kb
 
 
-def text_link_kb():
+def link_kb():
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.row("🟢 Text+Link ON", "🔴 Text+Link OFF")
-    kb.row("⬅️ Back")
-    return kb
-
-
-def channel_kb():
-    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.row("Channel 1", "Channel 2")
-    kb.row("Channel 3", "Channel 4")
-    kb.row("✅ Done", "🗑 Clear Channels")
+    kb.row("🟢 Link Arrange ON", "🔴 Link Arrange OFF")
     kb.row("⬅️ Back")
     return kb
 
@@ -101,9 +86,8 @@ def start(message):
     init_user(uid)
     bot.send_message(
         message.chat.id,
-        "🔥 Welcome\n\n"
-        "Safe text + link arrange bot ✅\n"
-        "Normal links clean ആയി arrange ചെയ്ത് auto forward ചെയ്യാം.",
+        "Welcome\n\n"
+        "Use this bot to arrange normal links cleanly.",
         reply_markup=main_kb()
     )
 
@@ -124,15 +108,10 @@ def help_menu(message):
     bot.send_message(
         message.chat.id,
         "HOW TO USE\n\n"
-        "1. Open 📝 Text + Link Arrange\n"
-        "2. Turn ON mode\n"
-        "3. Open 📢 Select Channel and choose channels\n"
-        "4. Turn ON auto forward\n"
-        "5. Send photo + text + links, or text + links\n"
-        "6. Bot keeps normal text and arranges links as:\n\n"
-        "FULL VIDEO 👀🌸\n"
-        "VIDEO 1 ⤵️\n"
-        "VIDEO 2 ⤵️",
+        "1. Open Link Arrangement\n"
+        "2. Turn ON link mode\n"
+        "3. Send photo + links, or text + links\n"
+        "4. Bot removes extra text and arranges links",
         reply_markup=main_kb()
     )
 
@@ -146,51 +125,24 @@ def current_settings(message):
     init_user(uid)
     settings = user_settings[uid]
 
-    mode = "ON ✅" if settings["text_link_mode"] else "OFF ❌"
+    link_mode = "ON ✅" if settings["link_mode"] else "OFF ❌"
+    thumb_mode = "ON ✅" if settings["thumb_mode"] else "OFF ❌"
     auto_forward = "ON ✅" if settings["auto_forward"] else "OFF ❌"
+    selected_photo = settings["selected_photo"] or "None ❌"
 
     if settings["selected_channels"]:
-        channel_names = []
-        for name, cid in CHANNELS.items():
-            if cid in settings["selected_channels"]:
-                channel_names.append(name)
-        channels_text = "\n".join(channel_names) if channel_names else "None ❌"
+        channels = "\n".join(settings["selected_channels"])
     else:
-        channels_text = "None ❌"
+        channels = "None ❌"
 
     text = (
         "📊 CURRENT SETTINGS\n\n"
-        f"📝 Text+Link Mode: {mode}\n"
-        f"📈 Auto Forward: {auto_forward}\n\n"
-        f"📢 Selected Channels:\n{channels_text}"
+        f"🔗 Link Mode: {link_mode}\n"
+        f"🖼️ Thumb Mode: {thumb_mode}\n"
+        f"📈 Auto Forward: {auto_forward}\n"
+        f"📸 Selected Photo: {selected_photo}\n\n"
+        f"📢 Channels:\n{channels}"
     )
-
-    bot.send_message(message.chat.id, text, reply_markup=main_kb())
-
-
-@bot.message_handler(func=lambda m: m.text == "📢 Current Forward Channels")
-def current_forward_channels(message):
-    uid = message.from_user.id
-    if not is_admin(uid):
-        return
-
-    init_user(uid)
-    selected = user_settings[uid]["selected_channels"]
-
-    if not selected:
-        bot.send_message(
-            message.chat.id,
-            "No forward channels selected ❌",
-            reply_markup=main_kb()
-        )
-        return
-
-    channel_names = []
-    for name, cid in CHANNELS.items():
-        if cid in selected:
-            channel_names.append(f"✅ {name}")
-
-    text = "📢 Current Forward Channels\n\n" + "\n".join(channel_names)
 
     bot.send_message(message.chat.id, text, reply_markup=main_kb())
 
@@ -200,129 +152,43 @@ def back_btn(message):
     uid = message.from_user.id
     if not is_admin(uid):
         return
+
+    init_user(uid)
+    user_settings[uid]["menu"] = "main"
     bot.send_message(message.chat.id, "Main menu ✅", reply_markup=main_kb())
 
 
-@bot.message_handler(func=lambda m: m.text == "📝 Text + Link Arrange")
-def text_link_menu(message):
+@bot.message_handler(func=lambda m: m.text == "🔗 Link Arrangement")
+def link_menu(message):
     uid = message.from_user.id
     if not is_admin(uid):
         return
 
     init_user(uid)
-    bot.send_message(
-        message.chat.id,
-        "Text + Link Arrange settings",
-        reply_markup=text_link_kb()
-    )
+    user_settings[uid]["menu"] = "link"
+    bot.send_message(message.chat.id, "Link Arrangement settings", reply_markup=link_kb())
 
 
-@bot.message_handler(func=lambda m: m.text == "🟢 Text+Link ON")
-def text_link_on(message):
+@bot.message_handler(func=lambda m: m.text == "🟢 Link Arrange ON")
+def link_on(message):
     uid = message.from_user.id
     if not is_admin(uid):
         return
 
     init_user(uid)
-    user_settings[uid]["text_link_mode"] = True
-    bot.send_message(
-        message.chat.id,
-        "Text + Link Arrange ON ✅",
-        reply_markup=text_link_kb()
-    )
+    user_settings[uid]["link_mode"] = True
+    bot.send_message(message.chat.id, "Link Arrange ON ✅", reply_markup=link_kb())
 
 
-@bot.message_handler(func=lambda m: m.text == "🔴 Text+Link OFF")
-def text_link_off(message):
+@bot.message_handler(func=lambda m: m.text == "🔴 Link Arrange OFF")
+def link_off(message):
     uid = message.from_user.id
     if not is_admin(uid):
         return
 
     init_user(uid)
-    user_settings[uid]["text_link_mode"] = False
-    bot.send_message(
-        message.chat.id,
-        "Text + Link Arrange OFF ❌",
-        reply_markup=text_link_kb()
-    )
-
-
-@bot.message_handler(func=lambda m: m.text == "📢 Select Channel")
-def select_channel_menu(message):
-    uid = message.from_user.id
-    if not is_admin(uid):
-        return
-
-    init_user(uid)
-    bot.send_message(message.chat.id, "Select channels", reply_markup=channel_kb())
-
-
-@bot.message_handler(func=lambda m: m.text in CHANNELS.keys())
-def channel_select(message):
-    uid = message.from_user.id
-    if not is_admin(uid):
-        return
-
-    init_user(uid)
-    channel_id = CHANNELS[message.text]
-    selected = user_settings[uid]["selected_channels"]
-
-    if channel_id in selected:
-        selected.remove(channel_id)
-        bot.send_message(
-            message.chat.id,
-            f"{message.text} removed ❌",
-            reply_markup=channel_kb()
-        )
-    else:
-        selected.append(channel_id)
-        bot.send_message(
-            message.chat.id,
-            f"{message.text} added ✅",
-            reply_markup=channel_kb()
-        )
-
-
-@bot.message_handler(func=lambda m: m.text == "✅ Done")
-def done_channels(message):
-    uid = message.from_user.id
-    if not is_admin(uid):
-        return
-
-    bot.send_message(message.chat.id, "Channels saved ✅", reply_markup=main_kb())
-
-
-@bot.message_handler(func=lambda m: m.text == "🗑 Clear Channels")
-def clear_channels(message):
-    uid = message.from_user.id
-    if not is_admin(uid):
-        return
-
-    init_user(uid)
-    user_settings[uid]["selected_channels"] = []
-    bot.send_message(message.chat.id, "Channels cleared ✅", reply_markup=channel_kb())
-
-
-@bot.message_handler(func=lambda m: m.text == "🟢 Auto Forward ON")
-def auto_forward_on(message):
-    uid = message.from_user.id
-    if not is_admin(uid):
-        return
-
-    init_user(uid)
-    user_settings[uid]["auto_forward"] = True
-    bot.send_message(message.chat.id, "Auto Forward ON ✅", reply_markup=main_kb())
-
-
-@bot.message_handler(func=lambda m: m.text == "🔴 Auto Forward OFF")
-def auto_forward_off(message):
-    uid = message.from_user.id
-    if not is_admin(uid):
-        return
-
-    init_user(uid)
-    user_settings[uid]["auto_forward"] = False
-    bot.send_message(message.chat.id, "Auto Forward OFF ❌", reply_markup=main_kb())
+    user_settings[uid]["link_mode"] = False
+    bot.send_message(message.chat.id, "Link Arrange OFF ❌", reply_markup=link_kb())
 
 
 @bot.message_handler(content_types=["photo"])
@@ -333,7 +199,7 @@ def photo_handler(message):
 
     init_user(uid)
 
-    if not user_settings[uid]["text_link_mode"]:
+    if not user_settings[uid]["link_mode"]:
         return
 
     photo_id = message.photo[-1].file_id
@@ -343,24 +209,17 @@ def photo_handler(message):
     if not links:
         return
 
-    final_caption = build_final_text(caption, links)
+    final_text = build_arranged_text(links)
 
     try:
         bot.send_photo(
             message.chat.id,
             photo_id,
-            caption=final_caption[:1024],
+            caption=final_text,
             reply_markup=main_kb()
         )
     except Exception as e:
         print("Photo send error:", e)
-
-    if user_settings[uid]["auto_forward"]:
-        for ch in user_settings[uid]["selected_channels"]:
-            try:
-                bot.send_photo(ch, photo_id, caption=final_caption[:1024])
-            except Exception as e:
-                print("Forward photo error:", e)
 
 
 @bot.message_handler(content_types=["text"])
@@ -372,33 +231,25 @@ def text_handler(message):
     init_user(uid)
 
     ignore = {
-        "📝 Text + Link Arrange",
-        "🟢 Text+Link ON",
-        "🔴 Text+Link OFF",
-        "📢 Select Channel",
-        "🟢 Auto Forward ON",
-        "🔴 Auto Forward OFF",
-        "📢 Current Forward Channels",
+        "🔗 Link Arrangement",
         "📊 Current Settings",
         "❓ Help",
-        "✅ Done",
-        "🗑 Clear Channels",
-        "⬅️ Back",
-        "Channel 1", "Channel 2", "Channel 3", "Channel 4"
+        "🟢 Link Arrange ON",
+        "🔴 Link Arrange OFF",
+        "⬅️ Back"
     }
 
     if message.text in ignore:
         return
 
-    if not user_settings[uid]["text_link_mode"]:
+    if not user_settings[uid]["link_mode"]:
         return
 
     links = extract_links(message.text)
-
     if not links:
         return
 
-    final_text = build_final_text(message.text, links)
+    final_text = build_arranged_text(links)
 
     try:
         bot.send_message(
@@ -408,13 +259,6 @@ def text_handler(message):
         )
     except Exception as e:
         print("Text send error:", e)
-
-    if user_settings[uid]["auto_forward"]:
-        for ch in user_settings[uid]["selected_channels"]:
-            try:
-                bot.send_message(ch, final_text)
-            except Exception as e:
-                print("Forward text error:", e)
 
 
 print("Bot running...")
