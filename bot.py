@@ -16,7 +16,8 @@ CHANNELS = {
     "Channel 2": "-1002514181198",
     "Channel 3": "-1002427180742",
     "Channel 4": "-1003590340901",
-}
+    "channel 5": "-1002852893991",
+    }
 
 THUMB_SLOTS = ["Photo 1", "Photo 2", "Photo 3", "Photo 4"]
 
@@ -75,13 +76,19 @@ def extract_malayalam(text):
         if not line:
             continue
 
+        # skip links
         if re.search(r'https?://', line):
             continue
 
+        # keep only Malayalam lines
         if re.search(r'[\u0D00-\u0D7F]', line):
             result.append(line)
 
-    # footer remove
+    # HEADER REMOVE
+    if len(result) > 1:
+        result = result[1:]
+
+    # FOOTER REMOVE
     if len(result) > 2:
         result = result[:-2]
     elif len(result) > 1:
@@ -167,13 +174,13 @@ def start(m):
     init_user(uid)
     bot.send_message(
         m.chat.id,
-        "🔥 POWERFUL BOT READY ✅\n\n"
-        "Features:\n"
+        "🔥 POWER BOT READY ✅\n\n"
         "• Thumb Change\n"
         "• Arrange Link\n"
         "• Text Edit\n"
-        "• Auto Forward\n"
-        "• 4 Thumbnail Slots\n\n"
+        "• Header Remove\n"
+        "• Footer Remove\n"
+        "• Auto Forward\n\n"
         "Buttons use ചെയ്യൂ 👇",
         reply_markup=main_kb()
     )
@@ -260,7 +267,7 @@ def thumb_on(m):
     init_user(uid)
 
     if not user_data[uid]["selected_thumb"]:
-        bot.send_message(m.chat.id, "ആദ്യം ✅ Use Thumb ചെയ്ത് ഒരു thumb select ചെയ്യൂ ❌", reply_markup=main_kb())
+        bot.send_message(m.chat.id, "ആദ്യം ✅ Use Thumb ചെയ്ത് thumb select ചെയ്യൂ ❌", reply_markup=main_kb())
         return
 
     user_data[uid]["thumb_mode"] = True
@@ -414,13 +421,16 @@ def current_settings(m):
 
     init_user(uid)
 
+    channel_names = selected_channel_names(uid)
+    channel_text = "\n".join(channel_names) if channel_names else "None ❌"
+
     text = (
         f"Thumb Mode: {'ON ✅' if user_data[uid]['thumb_mode'] else 'OFF ❌'}\n"
         f"Arrange Mode: {'ON ✅' if user_data[uid]['arrange_mode'] else 'OFF ❌'}\n"
         f"Text Edit Mode: {'ON ✅' if user_data[uid]['text_edit_mode'] else 'OFF ❌'}\n"
         f"Auto Forward: {'ON ✅' if user_data[uid]['auto_forward'] else 'OFF ❌'}\n"
-        f"Selected Thumb: {user_data[uid]['selected_thumb'] or 'None ❌'}\n"
-        f"Selected Channels:\n{chr(10).join(selected_channel_names(uid)) if selected_channel_names(uid) else 'None ❌'}"
+        f"Selected Thumb: {user_data[uid]['selected_thumb'] or 'None ❌'}\n\n"
+        f"Selected Channels:\n{channel_text}"
     )
     bot.send_message(m.chat.id, text, reply_markup=main_kb())
 
