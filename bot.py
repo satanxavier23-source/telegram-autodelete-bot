@@ -37,6 +37,7 @@ def init_user(uid):
             "thumb_mode": False,
             "arrange_mode": False,
             "text_edit_mode": False,
+            "ai_filter_mode": False,
             "auto_forward": False,
             "selected_channels": [],
             "selected_thumb": None,
@@ -67,6 +68,62 @@ def arrange(text):
     return build_links(links)[:1024]
 
 
+def is_footer_like(line: str) -> bool:
+    line = line.strip()
+    if not line:
+        return True
+
+    emoji_count = len(re.findall(r'[🔥💥⚜️❤️✅🥰😍😘💎✨⭐🎉💯]', line))
+    symbol_count = len(re.findall(r'[_\-—=~*]+', line))
+
+    footer_keywords = [
+        "ലൈക്ക്", "ലൈക്കുകൾ", "ലൈക്", "like", "likes",
+        "share", "subscribe", "support", "follow",
+        "ഉഷാർ", "പരിപാടി", "channel", "join", "@",
+        "comment", "comments", "reaction", "react"
+    ]
+
+    if emoji_count >= 4:
+        return True
+
+    if symbol_count >= 3:
+        return True
+
+    lower_line = line.lower()
+    for word in footer_keywords:
+        if word.lower() in lower_line:
+            return True
+
+    if len(line) < 5:
+        return True
+
+    return False
+
+
+def is_header_like(line: str) -> bool:
+    line = line.strip()
+    if not line:
+        return True
+
+    lower_line = line.lower()
+
+    header_keywords = [
+        "join", "channel", "group", "whatsapp", "telegram",
+        "subscribe", "follow", "new collection", "latest update"
+    ]
+
+    emoji_count = len(re.findall(r'[🔥💥⚜️❤️✅🥰😍😘💎✨⭐🎉💯]', line))
+
+    if emoji_count >= 3 and len(line) < 30:
+        return True
+
+    for word in header_keywords:
+        if word in lower_line:
+            return True
+
+    return False
+
+
 def extract_malayalam(text):
     lines = (text or "").splitlines()
     result = []
@@ -82,17 +139,21 @@ def extract_malayalam(text):
         if re.search(r'[\u0D00-\u0D7F]', line):
             result.append(line)
 
-    # HEADER REMOVE
+    if not result:
+        return []
+
+    # header remove
     if len(result) > 1:
         result = result[1:]
 
-    # FOOTER REMOVE
-    if len(result) > 2:
-        result = result[:-2]
-    elif len(result) > 1:
-        result = result[:-1]
+    # footer remove
+    cleaned = []
+    for line in result:
+        if is_footer_like(line):
+            continue
+        cleaned.append(line)
 
-    return result
+    return cleaned
 
 
 def text_edit(text):
@@ -103,6 +164,59 @@ def text_edit(text):
 
     if mal:
         final += "\n".join(mal).strip()
+
+    if links:
+        if final:
+            final += "\n\n"
+        final += build_links(links)
+
+    return final[:1024].strip()
+
+
+def smart_ai_filter(text):
+    lines = (text or "").splitlines()
+    links = extract_links(text)
+
+    cleaned_lines = []
+
+    for i, raw_line in enumerate(lines):
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        if re.search(r'https?://', line):
+            continue
+
+        # obvious header remove
+        if i == 0 and is_header_like(line):
+            continue
+
+        # footer remove
+        if is_footer_like(line):
+            continue
+
+        # English promo remove
+        if re.search(r'[A-Za-z]', line) and not re.search(r'[\u0D00-\u0D7F]', line):
+            continue
+
+        # spam emoji only line remove
+        if re.fullmatch(r'[\W_🔥💥⚜️❤️✅🥰😍😘💎✨⭐🎉💯]+', line):
+            continue
+
+        # keep Malayalam or mixed useful lines
+        if re.search(r'[\u0D00-\u0D7F]', line):
+            cleaned_lines.append(line)
+
+    # duplicate remove
+    unique_lines = []
+    for line in cleaned_lines:
+        if line not in unique_lines:
+            unique_lines.append(line)
+
+    final = ""
+
+    if unique_lines:
+        final += "\n".join(unique_lines).strip()
 
     if links:
         if final:
@@ -136,6 +250,7 @@ def main_kb():
     kb.row("🖼 Thumb ON", "❌ Thumb OFF")
     kb.row("🔗 Arrange ON", "🚫 Arrange OFF")
     kb.row("📝 Text Edit ON", "❎ Text Edit OFF")
+    kb.row("🤖 AI Filter ON", "🛑 AI Filter OFF")
     kb.row("📢 Select Channel")
     kb.row("🟢 Auto Forward ON", "🔴 Auto Forward OFF")
     kb.row("👁 Current Thumb", "📊 Current Settings")
@@ -173,10 +288,11 @@ def start(m):
     init_user(uid)
     bot.send_message(
         m.chat.id,
-        "🔥 POWER BOT READY ✅\n\n"
+        "🔥 SMART AI FILTER BOT READY ✅\n\n"
         "• Thumb Change\n"
         "• Arrange Link\n"
         "• Text Edit\n"
+        "• AI Smart Filter\n"
         "• Header Remove\n"
         "• Footer Remove\n"
         "• Auto Forward\n"
@@ -228,6 +344,7 @@ def thumb_slot(m):
     if user_data[uid]["thumb_action"] == "use":
         if user_data[uid]["thumbs"].get(slot):
             user_data[uid]["selected_thumb"] = slot
+            user_data[uid]["thumb_action"] = None
             bot.send_message(m.chat.id, f"{slot} selected ✅", reply_markup=main_kb())
         else:
             bot.send_message(m.chat.id, f"{slot} il thumb ഇല്ല ❌", reply_markup=slot_kb())
@@ -315,6 +432,7 @@ def text_edit_on(m):
 
     init_user(uid)
     user_data[uid]["text_edit_mode"] = True
+    user_data[uid]["ai_filter_mode"] = False
     bot.reply_to(m, "Text Edit ON 🔥")
 
 
@@ -327,6 +445,29 @@ def text_edit_off(m):
     init_user(uid)
     user_data[uid]["text_edit_mode"] = False
     bot.reply_to(m, "Text Edit OFF ❌")
+
+
+@bot.message_handler(func=lambda m: m.text == "🤖 AI Filter ON")
+def ai_filter_on(m):
+    uid = m.from_user.id
+    if not is_admin(uid):
+        return
+
+    init_user(uid)
+    user_data[uid]["ai_filter_mode"] = True
+    user_data[uid]["text_edit_mode"] = False
+    bot.reply_to(m, "AI Filter ON 🤖🔥")
+
+
+@bot.message_handler(func=lambda m: m.text == "🛑 AI Filter OFF")
+def ai_filter_off(m):
+    uid = m.from_user.id
+    if not is_admin(uid):
+        return
+
+    init_user(uid)
+    user_data[uid]["ai_filter_mode"] = False
+    bot.reply_to(m, "AI Filter OFF ❌")
 
 
 @bot.message_handler(func=lambda m: m.text == "🟢 Auto Forward ON")
@@ -428,6 +569,7 @@ def current_settings(m):
         f"Thumb Mode: {'ON ✅' if user_data[uid]['thumb_mode'] else 'OFF ❌'}\n"
         f"Arrange Mode: {'ON ✅' if user_data[uid]['arrange_mode'] else 'OFF ❌'}\n"
         f"Text Edit Mode: {'ON ✅' if user_data[uid]['text_edit_mode'] else 'OFF ❌'}\n"
+        f"AI Filter Mode: {'ON ✅' if user_data[uid]['ai_filter_mode'] else 'OFF ❌'}\n"
         f"Auto Forward: {'ON ✅' if user_data[uid]['auto_forward'] else 'OFF ❌'}\n"
         f"Selected Thumb: {user_data[uid]['selected_thumb'] or 'None ❌'}\n\n"
         f"Selected Channels:\n{channel_text}"
@@ -463,7 +605,9 @@ def photo_handler(m):
             send_photo = thumb
 
     final_caption = caption
-    if user_data[uid]["text_edit_mode"]:
+    if user_data[uid]["ai_filter_mode"]:
+        final_caption = smart_ai_filter(caption)
+    elif user_data[uid]["text_edit_mode"]:
         final_caption = text_edit(caption)
     elif user_data[uid]["arrange_mode"]:
         final_caption = arrange(caption)
@@ -499,6 +643,7 @@ def text_handler(m):
         "🖼 Thumb ON", "❌ Thumb OFF",
         "🔗 Arrange ON", "🚫 Arrange OFF",
         "📝 Text Edit ON", "❎ Text Edit OFF",
+        "🤖 AI Filter ON", "🛑 AI Filter OFF",
         "📢 Select Channel",
         "🟢 Auto Forward ON", "🔴 Auto Forward OFF",
         "👁 Current Thumb", "📊 Current Settings",
@@ -512,7 +657,9 @@ def text_handler(m):
 
     txt = m.text
 
-    if user_data[uid]["text_edit_mode"]:
+    if user_data[uid]["ai_filter_mode"]:
+        txt = smart_ai_filter(txt)
+    elif user_data[uid]["text_edit_mode"]:
         txt = text_edit(txt)
     elif user_data[uid]["arrange_mode"]:
         txt = arrange(txt)
