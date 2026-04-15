@@ -55,17 +55,19 @@ def extract_links(text):
 
 
 def build_links(links):
-    txt = ""
+    if not links:
+        return ""
+    txt = []
     for i, link in enumerate(links, 1):
-        txt += f"VIDEO {i} ⤵️\n{link}\n\n"
-    return txt.strip()
+        txt.append(f"VIDEO {i} ⤵️\n{link}")
+    return "\n\n".join(txt).strip()
 
 
 def arrange(text):
     links = extract_links(text)
     if not links:
-        return (text or "")[:1024]
-    return build_links(links)[:1024]
+        return (text or "").strip()[:4096]
+    return build_links(links)[:4096]
 
 
 def is_footer_like(line: str) -> bool:
@@ -73,20 +75,20 @@ def is_footer_like(line: str) -> bool:
     if not line:
         return True
 
-    emoji_count = len(re.findall(r'[🔥💥⚜️❤️✅🥰😍😘💎✨⭐🎉💯]', line))
+    emoji_count = len(re.findall(r'[🔥💥⚜️❤️✅🥰😍😘💎✨⭐🎉💯😂🤣🙏]', line))
     symbol_count = len(re.findall(r'[_\-—=~*]+', line))
 
     footer_keywords = [
         "ലൈക്ക്", "ലൈക്കുകൾ", "ലൈക്", "like", "likes",
         "share", "subscribe", "support", "follow",
-        "ഉഷാർ", "പരിപാടി", "channel", "join", "@",
-        "comment", "comments", "reaction", "react"
+        "channel", "join", "@", "comment", "comments",
+        "reaction", "react"
     ]
 
     if emoji_count >= 4:
         return True
 
-    if symbol_count >= 3:
+    if symbol_count >= 5:
         return True
 
     lower_line = line.lower()
@@ -94,7 +96,7 @@ def is_footer_like(line: str) -> bool:
         if word.lower() in lower_line:
             return True
 
-    if len(line) < 5:
+    if len(line) < 3:
         return True
 
     return False
@@ -109,12 +111,12 @@ def is_header_like(line: str) -> bool:
 
     header_keywords = [
         "join", "channel", "group", "whatsapp", "telegram",
-        "subscribe", "follow", "new collection", "latest update"
+        "subscribe", "follow", "latest update", "@"
     ]
 
     emoji_count = len(re.findall(r'[🔥💥⚜️❤️✅🥰😍😘💎✨⭐🎉💯]', line))
 
-    if emoji_count >= 3 and len(line) < 30:
+    if emoji_count >= 3 and len(line) < 35:
         return True
 
     for word in header_keywords:
@@ -142,11 +144,10 @@ def extract_malayalam(text):
     if not result:
         return []
 
-    # header remove
-    if len(result) > 1:
+    # smarter header remove
+    if result and is_header_like(result[0]):
         result = result[1:]
 
-    # footer remove
     cleaned = []
     for line in result:
         if is_footer_like(line):
@@ -160,17 +161,20 @@ def text_edit(text):
     mal = extract_malayalam(text)
     links = extract_links(text)
 
-    final = ""
+    parts = []
 
     if mal:
-        final += "\n".join(mal).strip()
+        parts.append("\n".join(mal).strip())
 
     if links:
-        if final:
-            final += "\n\n"
-        final += build_links(links)
+        parts.append(build_links(links))
 
-    return final[:1024].strip()
+    final = "\n\n".join([p for p in parts if p]).strip()
+
+    if not final:
+        final = (text or "").strip()
+
+    return final[:4096]
 
 
 def smart_ai_filter(text):
@@ -187,43 +191,43 @@ def smart_ai_filter(text):
         if re.search(r'https?://', line):
             continue
 
-        # obvious header remove
         if i == 0 and is_header_like(line):
             continue
 
-        # footer remove
         if is_footer_like(line):
             continue
 
-        # English promo remove
+        # pure english promo remove
         if re.search(r'[A-Za-z]', line) and not re.search(r'[\u0D00-\u0D7F]', line):
             continue
 
-        # spam emoji only line remove
-        if re.fullmatch(r'[\W_🔥💥⚜️❤️✅🥰😍😘💎✨⭐🎉💯]+', line):
+        # only emoji / symbols line remove
+        if re.fullmatch(r'[\W_🔥💥⚜️❤️✅🥰😍😘💎✨⭐🎉💯😂🤣🙏]+', line):
             continue
 
-        # keep Malayalam or mixed useful lines
+        # keep useful Malayalam / mixed lines
         if re.search(r'[\u0D00-\u0D7F]', line):
             cleaned_lines.append(line)
 
-    # duplicate remove
     unique_lines = []
     for line in cleaned_lines:
         if line not in unique_lines:
             unique_lines.append(line)
 
-    final = ""
+    parts = []
 
     if unique_lines:
-        final += "\n".join(unique_lines).strip()
+        parts.append("\n".join(unique_lines).strip())
 
     if links:
-        if final:
-            final += "\n\n"
-        final += build_links(links)
+        parts.append(build_links(links))
 
-    return final[:1024].strip()
+    final = "\n\n".join([p for p in parts if p]).strip()
+
+    if not final:
+        final = (text or "").strip()
+
+    return final[:4096]
 
 
 def get_thumb(uid):
@@ -239,6 +243,41 @@ def selected_channel_names(uid):
         if cid in user_data[uid]["selected_channels"]:
             names.append(name)
     return names
+
+
+def apply_processing(uid, text):
+    text = text or ""
+
+    if user_data[uid]["ai_filter_mode"]:
+        return smart_ai_filter(text)
+    elif user_data[uid]["text_edit_mode"]:
+        return text_edit(text)
+    elif user_data[uid]["arrange_mode"]:
+        return arrange(text)
+
+    return text.strip()
+
+
+def forward_to_channels_text(uid, text):
+    if not user_data[uid]["auto_forward"]:
+        return
+
+    for ch in user_data[uid]["selected_channels"]:
+        try:
+            bot.send_message(ch, text[:4096])
+        except Exception as e:
+            print("Forward text error:", e)
+
+
+def forward_to_channels_photo(uid, photo, caption=""):
+    if not user_data[uid]["auto_forward"]:
+        return
+
+    for ch in user_data[uid]["selected_channels"]:
+        try:
+            bot.send_photo(ch, photo, caption=(caption or "")[:1024])
+        except Exception as e:
+            print("Forward photo error:", e)
 
 
 # =========================
@@ -410,6 +449,8 @@ def arrange_on(m):
 
     init_user(uid)
     user_data[uid]["arrange_mode"] = True
+    user_data[uid]["text_edit_mode"] = False
+    user_data[uid]["ai_filter_mode"] = False
     bot.reply_to(m, "Arrange ON ✅")
 
 
@@ -433,6 +474,7 @@ def text_edit_on(m):
     init_user(uid)
     user_data[uid]["text_edit_mode"] = True
     user_data[uid]["ai_filter_mode"] = False
+    user_data[uid]["arrange_mode"] = False
     bot.reply_to(m, "Text Edit ON 🔥")
 
 
@@ -456,6 +498,7 @@ def ai_filter_on(m):
     init_user(uid)
     user_data[uid]["ai_filter_mode"] = True
     user_data[uid]["text_edit_mode"] = False
+    user_data[uid]["arrange_mode"] = False
     bot.reply_to(m, "AI Filter ON 🤖🔥")
 
 
@@ -591,40 +634,41 @@ def photo_handler(m):
     photo_id = m.photo[-1].file_id
     caption = m.caption or ""
 
+    # thumb save mode
     if user_data[uid]["waiting_thumb"]:
         slot = user_data[uid]["waiting_thumb"]
         user_data[uid]["thumbs"][slot] = photo_id
         user_data[uid]["waiting_thumb"] = None
+        user_data[uid]["thumb_action"] = None
         bot.send_message(m.chat.id, f"{slot} saved ✅", reply_markup=main_kb())
         return
 
-    send_photo = photo_id
+    final_text = apply_processing(uid, caption)
+
+    # IMPORTANT FIX:
+    # Text Edit / AI Filter mode -> send text only, not photo caption
+    if user_data[uid]["text_edit_mode"] or user_data[uid]["ai_filter_mode"]:
+        if final_text:
+            bot.send_message(m.chat.id, final_text[:4096], reply_markup=main_kb())
+            forward_to_channels_text(uid, final_text[:4096])
+        else:
+            bot.send_message(m.chat.id, "Text ഇല്ല ❌", reply_markup=main_kb())
+        return
+
+    # Arrange mode with photo -> keep photo, arranged caption
+    send_photo_id = photo_id
     if user_data[uid]["thumb_mode"]:
         thumb = get_thumb(uid)
         if thumb:
-            send_photo = thumb
-
-    final_caption = caption
-    if user_data[uid]["ai_filter_mode"]:
-        final_caption = smart_ai_filter(caption)
-    elif user_data[uid]["text_edit_mode"]:
-        final_caption = text_edit(caption)
-    elif user_data[uid]["arrange_mode"]:
-        final_caption = arrange(caption)
+            send_photo_id = thumb
 
     bot.send_photo(
         m.chat.id,
-        send_photo,
-        caption=final_caption[:1024],
+        send_photo_id,
+        caption=final_text[:1024] if final_text else "",
         reply_markup=main_kb()
     )
-
-    if user_data[uid]["auto_forward"]:
-        for ch in user_data[uid]["selected_channels"]:
-            try:
-                bot.send_photo(ch, send_photo, caption=final_caption[:1024])
-            except Exception as e:
-                print("Forward photo error:", e)
+    forward_to_channels_photo(uid, send_photo_id, final_text[:1024] if final_text else "")
 
 
 # =========================
@@ -655,36 +699,24 @@ def text_handler(m):
     if m.text in ignore:
         return
 
-    txt = m.text
+    final_text = apply_processing(uid, m.text)
 
-    if user_data[uid]["ai_filter_mode"]:
-        txt = smart_ai_filter(txt)
-    elif user_data[uid]["text_edit_mode"]:
-        txt = text_edit(txt)
-    elif user_data[uid]["arrange_mode"]:
-        txt = arrange(txt)
-
+    # text message + thumb mode -> send as photo with caption
     if user_data[uid]["thumb_mode"]:
         thumb = get_thumb(uid)
         if thumb:
-            bot.send_photo(m.chat.id, thumb, caption=txt[:1024], reply_markup=main_kb())
-
-            if user_data[uid]["auto_forward"]:
-                for ch in user_data[uid]["selected_channels"]:
-                    try:
-                        bot.send_photo(ch, thumb, caption=txt[:1024])
-                    except Exception as e:
-                        print("Forward text-photo error:", e)
+            bot.send_photo(
+                m.chat.id,
+                thumb,
+                caption=final_text[:1024] if final_text else "",
+                reply_markup=main_kb()
+            )
+            forward_to_channels_photo(uid, thumb, final_text[:1024] if final_text else "")
             return
 
-    bot.send_message(m.chat.id, txt[:4096], reply_markup=main_kb())
-
-    if user_data[uid]["auto_forward"]:
-        for ch in user_data[uid]["selected_channels"]:
-            try:
-                bot.send_message(ch, txt[:4096])
-            except Exception as e:
-                print("Forward text error:", e)
+    bot.send_message(m.chat.id, final_text[:4096] if final_text else "Empty text ❌", reply_markup=main_kb())
+    if final_text:
+        forward_to_channels_text(uid, final_text[:4096])
 
 
 print("Bot running...")
