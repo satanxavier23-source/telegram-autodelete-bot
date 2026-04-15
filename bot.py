@@ -16,8 +16,8 @@ CHANNELS = {
     "Channel 2": "-1002514181198",
     "Channel 3": "-1002427180742",
     "Channel 4": "-1003590340901",
-    "channel 5": "-1002852893991",
-    }
+    "Channel 5": "-1002852893991",
+}
 
 THUMB_SLOTS = ["Photo 1", "Photo 2", "Photo 3", "Photo 4"]
 
@@ -76,11 +76,9 @@ def extract_malayalam(text):
         if not line:
             continue
 
-        # skip links
         if re.search(r'https?://', line):
             continue
 
-        # keep only Malayalam lines
         if re.search(r'[\u0D00-\u0D7F]', line):
             result.append(line)
 
@@ -156,6 +154,7 @@ def channel_kb():
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
     kb.row("Channel 1", "Channel 2")
     kb.row("Channel 3", "Channel 4")
+    kb.row("Channel 5")
     kb.row("✅ Done", "🗑 Clear Channels")
     kb.row("⬅️ Back")
     return kb
@@ -180,7 +179,8 @@ def start(m):
         "• Text Edit\n"
         "• Header Remove\n"
         "• Footer Remove\n"
-        "• Auto Forward\n\n"
+        "• Auto Forward\n"
+        "• Channel 1 to Channel 5\n\n"
         "Buttons use ചെയ്യൂ 👇",
         reply_markup=main_kb()
     )
@@ -449,7 +449,6 @@ def photo_handler(m):
     photo_id = m.photo[-1].file_id
     caption = m.caption or ""
 
-    # save thumb
     if user_data[uid]["waiting_thumb"]:
         slot = user_data[uid]["waiting_thumb"]
         user_data[uid]["thumbs"][slot] = photo_id
@@ -503,7 +502,7 @@ def text_handler(m):
         "📢 Select Channel",
         "🟢 Auto Forward ON", "🔴 Auto Forward OFF",
         "👁 Current Thumb", "📊 Current Settings",
-        "Channel 1", "Channel 2", "Channel 3", "Channel 4",
+        "Channel 1", "Channel 2", "Channel 3", "Channel 4", "Channel 5",
         "✅ Done", "🗑 Clear Channels", "⬅️ Back",
         "Photo 1", "Photo 2", "Photo 3", "Photo 4"
     }
