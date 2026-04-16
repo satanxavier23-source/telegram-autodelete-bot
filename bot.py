@@ -38,6 +38,7 @@ def init_user(uid):
             "arrange_mode": False,
             "text_edit_mode": False,
             "ai_filter_mode": False,
+            "middle_mode": False,
             "auto_forward": False,
             "selected_channels": [],
             "selected_thumb": None,
@@ -169,15 +170,12 @@ def clean_lines_keep_malayalam(text):
         if is_link_line(line):
             continue
 
-        # remove numbered lines like 1 ... 2 ...
         if re.match(r'^\d+[\).\s]', line):
             continue
 
-        # remove english-only promo lines
         if re.search(r'[A-Za-z]', line) and not has_malayalam(line):
             continue
 
-        # remove symbol/emoji spam
         if only_symbols_or_emoji(line):
             continue
 
@@ -208,6 +206,36 @@ def clean_lines_keep_malayalam(text):
             seen.add(line)
 
     return final_lines
+
+
+def middle_text_filter(text):
+    lines = (text or "").splitlines()
+    result = []
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+
+        if re.search(r'https?://', line):
+            continue
+
+        if re.fullmatch(r'[\W_🔥💥⚜️❤️😂🤣💯✨📢📌👉✅🥰😍😘💎⭐🎉🙏•○●◇◆■□~`|_]+', line):
+            continue
+
+        if any(w in line for w in [
+            "ലൈക്ക്", "ലൈക്കുകൾ", "ഉഷാർ", "പരിപാടി",
+            "ചാനൽ", "സബ്സ്ക്രൈബ്", "ഫോളോ"
+        ]):
+            continue
+
+        if re.search(r'[\u0D00-\u0D7F]', line):
+            result.append(line)
+
+    if len(result) >= 1:
+        result = result[1:]
+
+    return result
 
 
 def arrange(text):
@@ -319,6 +347,20 @@ def selected_channel_names(uid):
 def apply_processing(uid, text):
     text = text or ""
 
+    if user_data[uid]["middle_mode"]:
+        mal = middle_text_filter(text)
+        links = extract_links(text)
+
+        parts = []
+
+        if mal:
+            parts.append("\n".join(mal))
+
+        if links:
+            parts.append(build_links(links))
+
+        return "\n\n".join(parts).strip()[:4096]
+
     if user_data[uid]["ai_filter_mode"]:
         return smart_ai_filter(text)
     elif user_data[uid]["text_edit_mode"]:
@@ -361,6 +403,7 @@ def main_kb():
     kb.row("🔗 Arrange ON", "🚫 Arrange OFF")
     kb.row("📝 Text Edit ON", "❎ Text Edit OFF")
     kb.row("🤖 AI Filter ON", "🛑 AI Filter OFF")
+    kb.row("🎯 Middle ON", "🛑 Middle OFF")
     kb.row("📢 Select Channel")
     kb.row("🟢 Auto Forward ON", "🔴 Auto Forward OFF")
     kb.row("👁 Current Thumb", "📊 Current Settings")
@@ -403,8 +446,7 @@ def start(m):
         "• Arrange Link\n"
         "• Text Edit\n"
         "• AI Smart Filter\n"
-        "• Header Remove\n"
-        "• Footer Remove\n"
+        "• Middle Text Mode\n"
         "• Auto Forward\n"
         "• Channel 1 to Channel 5\n\n"
         "Buttons use ചെയ്യൂ 👇",
@@ -522,6 +564,7 @@ def arrange_on(m):
     user_data[uid]["arrange_mode"] = True
     user_data[uid]["text_edit_mode"] = False
     user_data[uid]["ai_filter_mode"] = False
+    user_data[uid]["middle_mode"] = False
     bot.reply_to(m, "Arrange ON ✅")
 
 
@@ -546,6 +589,7 @@ def text_edit_on(m):
     user_data[uid]["text_edit_mode"] = True
     user_data[uid]["ai_filter_mode"] = False
     user_data[uid]["arrange_mode"] = False
+    user_data[uid]["middle_mode"] = False
     bot.reply_to(m, "Text Edit ON 🔥")
 
 
@@ -570,6 +614,7 @@ def ai_filter_on(m):
     user_data[uid]["ai_filter_mode"] = True
     user_data[uid]["text_edit_mode"] = False
     user_data[uid]["arrange_mode"] = False
+    user_data[uid]["middle_mode"] = False
     bot.reply_to(m, "AI Filter ON 🤖🔥")
 
 
@@ -582,6 +627,31 @@ def ai_filter_off(m):
     init_user(uid)
     user_data[uid]["ai_filter_mode"] = False
     bot.reply_to(m, "AI Filter OFF ❌")
+
+
+@bot.message_handler(func=lambda m: m.content_type == "text" and m.text == "🎯 Middle ON")
+def middle_on(m):
+    uid = m.from_user.id
+    if not is_admin(uid):
+        return
+
+    init_user(uid)
+    user_data[uid]["middle_mode"] = True
+    user_data[uid]["ai_filter_mode"] = False
+    user_data[uid]["text_edit_mode"] = False
+    user_data[uid]["arrange_mode"] = False
+    bot.reply_to(m, "Middle Mode ON 🎯")
+
+
+@bot.message_handler(func=lambda m: m.content_type == "text" and m.text == "🛑 Middle OFF")
+def middle_off(m):
+    uid = m.from_user.id
+    if not is_admin(uid):
+        return
+
+    init_user(uid)
+    user_data[uid]["middle_mode"] = False
+    bot.reply_to(m, "Middle Mode OFF ❌")
 
 
 @bot.message_handler(func=lambda m: m.content_type == "text" and m.text == "🟢 Auto Forward ON")
@@ -684,6 +754,7 @@ def current_settings(m):
         f"Arrange Mode: {'ON ✅' if user_data[uid]['arrange_mode'] else 'OFF ❌'}\n"
         f"Text Edit Mode: {'ON ✅' if user_data[uid]['text_edit_mode'] else 'OFF ❌'}\n"
         f"AI Filter Mode: {'ON ✅' if user_data[uid]['ai_filter_mode'] else 'OFF ❌'}\n"
+        f"Middle Mode: {'ON ✅' if user_data[uid]['middle_mode'] else 'OFF ❌'}\n"
         f"Auto Forward: {'ON ✅' if user_data[uid]['auto_forward'] else 'OFF ❌'}\n"
         f"Selected Thumb: {user_data[uid]['selected_thumb'] or 'None ❌'}\n\n"
         f"Selected Channels:\n{channel_text}"
@@ -748,6 +819,7 @@ def text_handler(m):
         "🔗 Arrange ON", "🚫 Arrange OFF",
         "📝 Text Edit ON", "❎ Text Edit OFF",
         "🤖 AI Filter ON", "🛑 AI Filter OFF",
+        "🎯 Middle ON", "🛑 Middle OFF",
         "📢 Select Channel",
         "🟢 Auto Forward ON", "🔴 Auto Forward OFF",
         "👁 Current Thumb", "📊 Current Settings",
