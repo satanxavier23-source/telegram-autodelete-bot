@@ -1,13 +1,20 @@
 import os
 import re
+import json
+import time
 import telebot
+import threading
+import logging
 from telebot import types
 
+# =========================
+# CONFIG
+# =========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN not set")
 
-bot = telebot.TeleBot(BOT_TOKEN)
+bot = telebot.TeleBot(BOT_TOKEN, threaded=True)
 
 ADMIN_IDS = [6630347046, 7194569468]
 
@@ -20,8 +27,76 @@ CHANNELS = {
 }
 
 THUMB_SLOTS = ["Photo 1", "Photo 2", "Photo 3", "Photo 4"]
+DATA_FILE = "user_data.json"
 
 user_data = {}
+data_lock = threading.Lock()
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s"
+)
+
+# =========================
+# SAVE / LOAD
+# =========================
+def default_user_state():
+    return {
+        "thumb_mode": False,
+        "arrange_mode": False,
+        "text_edit_mode": False,
+        "middle_mode": False,
+        "keep_text_mode": False,
+        "auto_forward": False,
+        "remove_header_mode": False,
+        "remove_footer_mode": False,
+        "selected_channels": [],
+        "selected_thumb": None,
+        "waiting_thumb": None,
+        "thumb_action": None,
+        "thumbs": {slot: None for slot in THUMB_SLOTS},
+    }
+
+
+def save_data():
+    try:
+        with data_lock:
+            with open(DATA_FILE, "w", encoding="utf-8") as f:
+                json.dump(user_data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logging.error(f"Save data error: {e}")
+
+
+def load_data():
+    global user_data
+    try:
+        if not os.path.exists(DATA_FILE):
+            user_data = {}
+            return
+
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+
+        fixed = {}
+        for uid_str, value in raw.items():
+            uid = int(uid_str)
+            base = default_user_state()
+            base.update(value)
+
+            if "thumbs" not in base or not isinstance(base["thumbs"], dict):
+                base["thumbs"] = {slot: None for slot in THUMB_SLOTS}
+            else:
+                for slot in THUMB_SLOTS:
+                    if slot not in base["thumbs"]:
+                        base["thumbs"][slot] = None
+
+            fixed[uid] = base
+
+        user_data = fixed
+        logging.info("User data loaded successfully")
+    except Exception as e:
+        logging.error(f"Load data error: {e}")
+        user_data = {}
 
 
 # =========================
@@ -32,22 +107,10 @@ def is_admin(uid):
 
 
 def init_user(uid):
-    if uid not in user_data:
-        user_data[uid] = {
-            "thumb_mode": False,
-            "arrange_mode": False,
-            "text_edit_mode": False,
-            "middle_mode": False,
-            "keep_text_mode": False,
-            "auto_forward": False,
-            "remove_header_mode": False,
-            "remove_footer_mode": False,
-            "selected_channels": [],
-            "selected_thumb": None,
-            "waiting_thumb": None,
-            "thumb_action": None,
-            "thumbs": {slot: None for slot in THUMB_SLOTS},
-        }
+    with data_lock:
+        if uid not in user_data:
+            user_data[uid] = default_user_state()
+    save_data()
 
 
 # =========================
@@ -58,22 +121,24 @@ def normalize_line(line: str) -> str:
 
 
 def extract_links(text):
-    return re.findall(r"https?://[^\s]+", text or "")
+    return re.findall(r'https?://[^\s<>()"]+', text or "")
+
+
+def unique_keep_order(items):
+    seen = set()
+    out = []
+    for item in items:
+        if item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
 
 
 def build_links(links):
+    links = unique_keep_order(links)
     if not links:
         return ""
-
-    unique_links = []
-    for link in links:
-        if link not in unique_links:
-            unique_links.append(link)
-
-    out = []
-    for i, link in enumerate(unique_links, 1):
-        out.append(f"Video {i}\n{link}")
-    return "\n\n".join(out).strip()
+    return "\n\n".join([f"Video {i}\n{link}" for i, link in enumerate(links, 1)]).strip()
 
 
 def safe_caption(text):
@@ -103,16 +168,23 @@ def is_header_like(line: str) -> bool:
 
     lower = line.lower()
 
-    header_keywords = [
-        "join", "join our", "channel", "group",
-        "telegram", "whatsapp", "follow", "subscribe",
-        "latest update", "watch video", "terabox channel", "@",
-        "must watch", "rasikan bro", "join our terabox channel"
+    exact_keywords = [
+        "join our terabox channel",
+        "rasikan bro",
+        "watch video",
+        "terabox channel",
+        "join our whatsapp channel",
     ]
-
-    for word in header_keywords:
+    for word in exact_keywords:
         if word in lower:
             return True
+
+    if lower.startswith("@") and len(line) < 40:
+        return True
+
+    promo_words = ["join", "telegram", "whatsapp", "subscribe", "follow"]
+    if any(word in lower for word in promo_words) and len(line) < 80:
+        return True
 
     emoji_count = len(re.findall(r"[🔥💥⚜️❤️✅🥰😍😘💎✨⭐🎉💯📢📌👉]", line))
     if emoji_count >= 3 and len(line) < 60:
@@ -132,27 +204,34 @@ def is_footer_like(line: str) -> bool:
     lower = line.lower()
 
     footer_keywords = [
-        "join", "join our", "join our whatsapp",
-        "whatsapp", "telegram", "channel", "group",
-        "follow", "follow us",
-        "subscribe", "support",
-        "comment", "comments",
-        "react", "reaction",
-        "like", "likes", "share",
-        "watch", "watch now", "must watch",
-        "click", "our channel", "@",
-        "terabox channel", "join our terabox channel",
-        "കൂടുതൽ", "വീഡിയോ", "വീഡിയോകൾക്കായി",
-        "ചാനൽ", "സബ്സ്ക്രൈബ്", "ഫോളോ",
-        "ലൈക്ക്", "ലൈക്കുകൾ", "ഷെയർ", "കമന്റ്",
-        "ഞങ്ങളുടെ", "നമ്മുടെ", "വന്നാൽ", "ഉഷാർ", "പരിപാടി"
+        "join our",
+        "telegram channel",
+        "whatsapp channel",
+        "follow us",
+        "subscribe",
+        "like",
+        "share",
+        "comment",
+        "reaction",
+        "our channel",
+        "terabox channel",
+        "കൂടുതൽ",
+        "വീഡിയോകൾക്കായി",
+        "ചാനൽ",
+        "സബ്സ്ക്രൈബ്",
+        "ഫോളോ",
+        "ലൈക്ക്",
+        "ലൈക്കുകൾ",
+        "ഷെയർ",
+        "കമന്റ്",
+        "ഞങ്ങളുടെ",
+        "നമ്മുടെ",
     ]
 
-    for word in footer_keywords:
-        if word in lower:
-            return True
+    if any(word in lower for word in footer_keywords) and len(line) < 120:
+        return True
 
-    if len(re.findall(r"[🔥💥⚜️❤️😂🤣💯✨📢📌👉🥰😍😘💎⭐🎉🙏]", line)) >= 3:
+    if len(re.findall(r"[🔥💥⚜️❤️😂🤣💯✨📢📌👉🥰😍😘💎⭐🎉🙏]", line)) >= 4:
         return True
 
     if re.search(r"[_\-—=~*#]{3,}", line):
@@ -165,6 +244,7 @@ def is_footer_like(line: str) -> bool:
 
 
 def remove_header_footer_lines(uid, text):
+    original = (text or "").strip()
     lines = (text or "").splitlines()
     cleaned = [line.rstrip() for line in lines if line.strip()]
 
@@ -179,10 +259,11 @@ def remove_header_footer_lines(uid, text):
         while cleaned and is_footer_like(cleaned[-1]):
             cleaned.pop()
 
-    return "\n".join(cleaned).strip()
+    result = "\n".join(cleaned).strip()
+    return result if result else original
 
 
-def clean_lines_keep_malayalam(text):
+def clean_lines_keep_malayalam(uid, text):
     lines = (text or "").splitlines()
     cleaned = []
 
@@ -215,23 +296,15 @@ def clean_lines_keep_malayalam(text):
         if has_malayalam(line):
             cleaned.append(line)
 
-    if user_data.get(_CURRENT_UID, {}).get("remove_header_mode", False):
+    if user_data[uid]["remove_header_mode"]:
         while cleaned and is_header_like(cleaned[0]):
             cleaned.pop(0)
 
-    if user_data.get(_CURRENT_UID, {}).get("remove_footer_mode", False):
+    if user_data[uid]["remove_footer_mode"]:
         while cleaned and is_footer_like(cleaned[-1]):
             cleaned.pop()
 
-    final_lines = []
-    seen = set()
-
-    for line in cleaned:
-        if line not in seen:
-            final_lines.append(line)
-            seen.add(line)
-
-    return final_lines
+    return unique_keep_order(cleaned)
 
 
 def middle_text_filter(text):
@@ -255,7 +328,7 @@ def middle_text_filter(text):
         ]):
             continue
 
-        if re.search(r"[\u0D00-\u0D7F]", line):
+        if has_malayalam(line):
             result.append(line)
 
     if len(result) >= 1:
@@ -271,12 +344,11 @@ def arrange(text):
     return safe_text(build_links(links))
 
 
-def text_edit(text):
-    mal_lines = clean_lines_keep_malayalam(text)
+def text_edit(uid, text):
+    mal_lines = clean_lines_keep_malayalam(uid, text)
     links = extract_links(text)
 
     parts = []
-
     if mal_lines:
         parts.append("\n".join(mal_lines).strip())
 
@@ -284,24 +356,23 @@ def text_edit(text):
         parts.append(build_links(links))
 
     final = "\n\n".join([p for p in parts if p]).strip()
-
     if not final:
         final = (text or "").strip()
 
     return safe_text(final)
 
 
-def keep_text_and_links(text):
+def keep_text_and_links(uid, text):
     if not text:
         return ""
 
     lines = [line.strip() for line in text.splitlines() if line.strip()]
 
-    if user_data.get(_CURRENT_UID, {}).get("remove_header_mode", False):
+    if user_data[uid]["remove_header_mode"]:
         while lines and is_header_like(lines[0]):
             lines.pop(0)
 
-    if user_data.get(_CURRENT_UID, {}).get("remove_footer_mode", False):
+    if user_data[uid]["remove_footer_mode"]:
         while lines and is_footer_like(lines[-1]):
             lines.pop()
 
@@ -314,53 +385,49 @@ def keep_text_and_links(text):
 
     links = []
     for line in lines:
-        found = re.findall(r"https?://[^\s]+", line)
+        found = re.findall(r'https?://[^\s<>()"]+', line)
         for url in found:
             if url not in links:
                 links.append(url)
 
     main_text_lines = []
-    if not bracket_text:
-        ignore_patterns = [
-            r"join",
-            r"join our",
-            r"channel",
-            r"terabox channel",
-            r"whatsapp channel",
-            r"follow",
-            r"subscribe",
-            r"watch video",
-            r"video\s*\d+",
-            r"^https?://",
-            r"^\.$",
-            r"^🆔$",
-            r"rasikan bro",
-            r"കൂടുതൽ വീഡിയോകൾക്കായി",
-            r"സബ്സ്ക്രൈബ്",
-            r"ചാനൽ",
-        ]
+    ignore_patterns = [
+        r"join",
+        r"join our",
+        r"terabox channel",
+        r"whatsapp channel",
+        r"follow",
+        r"subscribe",
+        r"watch video",
+        r"video\s*\d+",
+        r"^https?://",
+        r"^\.$",
+        r"^🆔$",
+        r"rasikan bro",
+        r"കൂടുതൽ വീഡിയോകൾക്കായി",
+        r"സബ്സ്ക്രൈബ്",
+    ]
 
-        for line in lines:
-            low = line.lower()
+    for line in lines:
+        low = line.lower()
 
-            if re.search(r"https?://", line):
-                continue
+        if re.search(r"https?://", line):
+            continue
 
-            if re.search(r"\[.*?\]", line):
-                continue
+        if re.search(r"\[.*?\]", line):
+            continue
 
-            if any(re.search(p, low) for p in ignore_patterns):
-                continue
+        if any(re.search(p, low) for p in ignore_patterns):
+            continue
 
-            if only_symbols_or_emoji(line):
-                continue
+        if only_symbols_or_emoji(line):
+            continue
 
-            main_text_lines.append(line)
+        main_text_lines.append(line)
 
-    main_text = " ".join(main_text_lines).strip()
+    main_text = " ".join(unique_keep_order(main_text_lines)).strip()
 
     result = []
-
     if bracket_text:
         result.append(bracket_text)
     elif main_text:
@@ -387,39 +454,68 @@ def selected_channel_names(uid):
     return names
 
 
-_CURRENT_UID = None
-
-
 def apply_processing(uid, text):
-    global _CURRENT_UID
-    _CURRENT_UID = uid
-
     text = text or ""
     text = remove_header_footer_lines(uid, text)
 
     if user_data[uid]["keep_text_mode"]:
-        return keep_text_and_links(text)
+        return keep_text_and_links(uid, text)
 
     if user_data[uid]["middle_mode"]:
         mal = middle_text_filter(text)
         links = extract_links(text)
 
         parts = []
-
         if mal:
             parts.append("\n".join(mal))
-
         if links:
             parts.append(build_links(links))
 
-        return "\n\n".join(parts).strip()[:4096]
+        result = "\n\n".join(parts).strip()
+        return safe_text(result if result else text)
 
     if user_data[uid]["text_edit_mode"]:
-        return text_edit(text)
-    elif user_data[uid]["arrange_mode"]:
+        return text_edit(uid, text)
+
+    if user_data[uid]["arrange_mode"]:
         return arrange(text)
 
-    return text.strip()
+    return safe_text(text.strip())
+
+
+def send_message_safe(chat_id, text, reply_markup=None):
+    try:
+        return bot.send_message(chat_id, safe_text(text), reply_markup=reply_markup)
+    except Exception as e:
+        logging.error(f"Send message error: {e}")
+
+
+def send_photo_safe(chat_id, photo, caption="", reply_markup=None):
+    try:
+        return bot.send_photo(chat_id, photo, caption=safe_caption(caption), reply_markup=reply_markup)
+    except Exception as e:
+        logging.error(f"Send photo error: {e}")
+
+
+def send_video_safe(chat_id, video, caption="", reply_markup=None):
+    try:
+        return bot.send_video(chat_id, video, caption=safe_caption(caption), reply_markup=reply_markup)
+    except Exception as e:
+        logging.error(f"Send video error: {e}")
+
+
+def send_document_safe(chat_id, document, caption="", reply_markup=None):
+    try:
+        return bot.send_document(chat_id, document, caption=safe_caption(caption), reply_markup=reply_markup)
+    except Exception as e:
+        logging.error(f"Send document error: {e}")
+
+
+def send_animation_safe(chat_id, animation, caption="", reply_markup=None):
+    try:
+        return bot.send_animation(chat_id, animation, caption=safe_caption(caption), reply_markup=reply_markup)
+    except Exception as e:
+        logging.error(f"Send animation error: {e}")
 
 
 def forward_to_channels_text(uid, text):
@@ -427,10 +523,7 @@ def forward_to_channels_text(uid, text):
         return
 
     for ch in user_data[uid]["selected_channels"]:
-        try:
-            bot.send_message(ch, safe_text(text))
-        except Exception as e:
-            print("Forward text error:", e)
+        send_message_safe(ch, text)
 
 
 def forward_to_channels_photo(uid, photo, caption=""):
@@ -438,10 +531,31 @@ def forward_to_channels_photo(uid, photo, caption=""):
         return
 
     for ch in user_data[uid]["selected_channels"]:
-        try:
-            bot.send_photo(ch, photo, caption=safe_caption(caption))
-        except Exception as e:
-            print("Forward photo error:", e)
+        send_photo_safe(ch, photo, caption=caption)
+
+
+def forward_to_channels_video(uid, video, caption=""):
+    if not user_data[uid]["auto_forward"]:
+        return
+
+    for ch in user_data[uid]["selected_channels"]:
+        send_video_safe(ch, video, caption=caption)
+
+
+def forward_to_channels_document(uid, document, caption=""):
+    if not user_data[uid]["auto_forward"]:
+        return
+
+    for ch in user_data[uid]["selected_channels"]:
+        send_document_safe(ch, document, caption=caption)
+
+
+def forward_to_channels_animation(uid, animation, caption=""):
+    if not user_data[uid]["auto_forward"]:
+        return
+
+    for ch in user_data[uid]["selected_channels"]:
+        send_animation_safe(ch, animation, caption=caption)
 
 
 # =========================
@@ -450,13 +564,13 @@ def forward_to_channels_photo(uid, photo, caption=""):
 def main_kb():
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
     kb.row("📸 Set Thumb", "✅ Use Thumb")
-    kb.row("🖼 Thumb ON", "❌ Thumb OFF")
-    kb.row("🔗 Arrange ON", "🚫 Arrange OFF")
-    kb.row("🧲 Keep Text ON", "❌ Keep Text OFF")
-    kb.row("📝 Text Edit ON", "❎ Text Edit OFF")
-    kb.row("🎯 Middle ON", "🛑 Middle OFF")
-    kb.row("🧹 Header Remove ON", "🚫 Header Remove OFF")
-    kb.row("✂️ Footer Remove ON", "❌ Footer Remove OFF")
+    kb.row("🖼 Thumb ON", "🖼 Thumb OFF")
+    kb.row("🔗 Arrange ON", "🔗 Arrange OFF")
+    kb.row("🧲 Keep Text ON", "🧲 Keep Text OFF")
+    kb.row("📝 Text Edit ON", "📝 Text Edit OFF")
+    kb.row("🎯 Middle ON", "🎯 Middle OFF")
+    kb.row("🧹 Header Remove ON", "🧹 Header Remove OFF")
+    kb.row("✂️ Footer Remove ON", "✂️ Footer Remove OFF")
     kb.row("📢 Select Channel")
     kb.row("🟢 Auto Forward ON", "🔴 Auto Forward OFF")
     kb.row("👁 Current Thumb", "📊 Current Settings")
@@ -492,7 +606,7 @@ def start(m):
         return
 
     init_user(uid)
-    bot.send_message(
+    send_message_safe(
         m.chat.id,
         "🔥 SMART FILTER BOT READY ✅\n\n"
         "• Thumb Change\n"
@@ -503,6 +617,7 @@ def start(m):
         "• Header Remove\n"
         "• Footer Remove\n"
         "• Auto Forward\n"
+        "• Photo / Video / Document / Animation Support\n"
         "• Channel 1 to Channel 5\n\n"
         "Buttons use ചെയ്യൂ 👇",
         reply_markup=main_kb()
@@ -520,7 +635,8 @@ def set_thumb(m):
 
     init_user(uid)
     user_data[uid]["thumb_action"] = "set"
-    bot.send_message(m.chat.id, "Save ചെയ്യാൻ slot select ചെയ്യൂ", reply_markup=slot_kb())
+    save_data()
+    send_message_safe(m.chat.id, "Save ചെയ്യാൻ slot select ചെയ്യൂ", reply_markup=slot_kb())
 
 
 @bot.message_handler(func=lambda m: m.content_type == "text" and m.text == "✅ Use Thumb")
@@ -531,7 +647,8 @@ def use_thumb(m):
 
     init_user(uid)
     user_data[uid]["thumb_action"] = "use"
-    bot.send_message(m.chat.id, "Use ചെയ്യാൻ slot select ചെയ്യൂ", reply_markup=slot_kb())
+    save_data()
+    send_message_safe(m.chat.id, "Use ചെയ്യാൻ slot select ചെയ്യൂ", reply_markup=slot_kb())
 
 
 @bot.message_handler(func=lambda m: m.content_type == "text" and m.text in THUMB_SLOTS)
@@ -542,19 +659,25 @@ def thumb_slot(m):
 
     init_user(uid)
     slot = m.text
+    action = user_data[uid]["thumb_action"]
 
-    if user_data[uid]["thumb_action"] == "set":
+    if action == "set":
         user_data[uid]["waiting_thumb"] = slot
-        bot.send_message(m.chat.id, f"{slot} ലേക്ക് save ചെയ്യാൻ photo അയക്കൂ 📸", reply_markup=slot_kb())
+        save_data()
+        send_message_safe(m.chat.id, f"{slot} ലേക്ക് save ചെയ്യാൻ photo അയക്കൂ 📸", reply_markup=slot_kb())
         return
 
-    if user_data[uid]["thumb_action"] == "use":
+    if action == "use":
         if user_data[uid]["thumbs"].get(slot):
             user_data[uid]["selected_thumb"] = slot
             user_data[uid]["thumb_action"] = None
-            bot.send_message(m.chat.id, f"{slot} selected ✅", reply_markup=main_kb())
+            save_data()
+            send_message_safe(m.chat.id, f"{slot} selected ✅", reply_markup=main_kb())
         else:
-            bot.send_message(m.chat.id, f"{slot} il thumb ഇല്ല ❌", reply_markup=slot_kb())
+            send_message_safe(m.chat.id, f"{slot} il thumb ഇല്ല ❌", reply_markup=slot_kb())
+        return
+
+    send_message_safe(m.chat.id, "ആദ്യം 📸 Set Thumb അല്ലെങ്കിൽ ✅ Use Thumb press ചെയ്യൂ", reply_markup=main_kb())
 
 
 @bot.message_handler(func=lambda m: m.content_type == "text" and m.text == "👁 Current Thumb")
@@ -568,15 +691,10 @@ def current_thumb(m):
     slot = user_data[uid]["selected_thumb"]
 
     if not thumb:
-        bot.send_message(m.chat.id, "Current thumb ഇല്ല ❌", reply_markup=main_kb())
+        send_message_safe(m.chat.id, "Current thumb ഇല്ല ❌", reply_markup=main_kb())
         return
 
-    bot.send_photo(
-        m.chat.id,
-        thumb,
-        caption=f"Current Thumb: {slot} ✅",
-        reply_markup=main_kb()
-    )
+    send_photo_safe(m.chat.id, thumb, caption=f"Current Thumb: {slot} ✅", reply_markup=main_kb())
 
 
 # =========================
@@ -589,16 +707,16 @@ def thumb_on(m):
         return
 
     init_user(uid)
-
     if not user_data[uid]["selected_thumb"]:
-        bot.send_message(m.chat.id, "ആദ്യം ✅ Use Thumb ചെയ്ത് thumb select ചെയ്യൂ ❌", reply_markup=main_kb())
+        send_message_safe(m.chat.id, "ആദ്യം ✅ Use Thumb ചെയ്ത് thumb select ചെയ്യൂ ❌", reply_markup=main_kb())
         return
 
     user_data[uid]["thumb_mode"] = True
+    save_data()
     bot.reply_to(m, "Thumb ON ✅")
 
 
-@bot.message_handler(func=lambda m: m.content_type == "text" and m.text == "❌ Thumb OFF")
+@bot.message_handler(func=lambda m: m.content_type == "text" and m.text == "🖼 Thumb OFF")
 def thumb_off(m):
     uid = m.from_user.id
     if not is_admin(uid):
@@ -606,6 +724,7 @@ def thumb_off(m):
 
     init_user(uid)
     user_data[uid]["thumb_mode"] = False
+    save_data()
     bot.reply_to(m, "Thumb OFF ❌")
 
 
@@ -620,10 +739,11 @@ def arrange_on(m):
     user_data[uid]["text_edit_mode"] = False
     user_data[uid]["middle_mode"] = False
     user_data[uid]["keep_text_mode"] = False
+    save_data()
     bot.reply_to(m, "Arrange ON ✅")
 
 
-@bot.message_handler(func=lambda m: m.content_type == "text" and m.text == "🚫 Arrange OFF")
+@bot.message_handler(func=lambda m: m.content_type == "text" and m.text == "🔗 Arrange OFF")
 def arrange_off(m):
     uid = m.from_user.id
     if not is_admin(uid):
@@ -631,6 +751,7 @@ def arrange_off(m):
 
     init_user(uid)
     user_data[uid]["arrange_mode"] = False
+    save_data()
     bot.reply_to(m, "Arrange OFF ❌")
 
 
@@ -645,10 +766,11 @@ def keep_text_on(m):
     user_data[uid]["arrange_mode"] = False
     user_data[uid]["text_edit_mode"] = False
     user_data[uid]["middle_mode"] = False
+    save_data()
     bot.reply_to(m, "Keep Text Mode ON ✅")
 
 
-@bot.message_handler(func=lambda m: m.content_type == "text" and m.text == "❌ Keep Text OFF")
+@bot.message_handler(func=lambda m: m.content_type == "text" and m.text == "🧲 Keep Text OFF")
 def keep_text_off(m):
     uid = m.from_user.id
     if not is_admin(uid):
@@ -656,6 +778,7 @@ def keep_text_off(m):
 
     init_user(uid)
     user_data[uid]["keep_text_mode"] = False
+    save_data()
     bot.reply_to(m, "Keep Text Mode OFF ❌")
 
 
@@ -670,10 +793,11 @@ def text_edit_on(m):
     user_data[uid]["arrange_mode"] = False
     user_data[uid]["middle_mode"] = False
     user_data[uid]["keep_text_mode"] = False
+    save_data()
     bot.reply_to(m, "Text Edit ON 🔥")
 
 
-@bot.message_handler(func=lambda m: m.content_type == "text" and m.text == "❎ Text Edit OFF")
+@bot.message_handler(func=lambda m: m.content_type == "text" and m.text == "📝 Text Edit OFF")
 def text_edit_off(m):
     uid = m.from_user.id
     if not is_admin(uid):
@@ -681,6 +805,7 @@ def text_edit_off(m):
 
     init_user(uid)
     user_data[uid]["text_edit_mode"] = False
+    save_data()
     bot.reply_to(m, "Text Edit OFF ❌")
 
 
@@ -695,10 +820,11 @@ def middle_on(m):
     user_data[uid]["text_edit_mode"] = False
     user_data[uid]["arrange_mode"] = False
     user_data[uid]["keep_text_mode"] = False
+    save_data()
     bot.reply_to(m, "Middle Mode ON 🎯")
 
 
-@bot.message_handler(func=lambda m: m.content_type == "text" and m.text == "🛑 Middle OFF")
+@bot.message_handler(func=lambda m: m.content_type == "text" and m.text == "🎯 Middle OFF")
 def middle_off(m):
     uid = m.from_user.id
     if not is_admin(uid):
@@ -706,6 +832,7 @@ def middle_off(m):
 
     init_user(uid)
     user_data[uid]["middle_mode"] = False
+    save_data()
     bot.reply_to(m, "Middle Mode OFF ❌")
 
 
@@ -717,10 +844,11 @@ def header_remove_on(m):
 
     init_user(uid)
     user_data[uid]["remove_header_mode"] = True
+    save_data()
     bot.reply_to(m, "Header Remove ON ✅")
 
 
-@bot.message_handler(func=lambda m: m.content_type == "text" and m.text == "🚫 Header Remove OFF")
+@bot.message_handler(func=lambda m: m.content_type == "text" and m.text == "🧹 Header Remove OFF")
 def header_remove_off(m):
     uid = m.from_user.id
     if not is_admin(uid):
@@ -728,6 +856,7 @@ def header_remove_off(m):
 
     init_user(uid)
     user_data[uid]["remove_header_mode"] = False
+    save_data()
     bot.reply_to(m, "Header Remove OFF ❌")
 
 
@@ -739,10 +868,11 @@ def footer_remove_on(m):
 
     init_user(uid)
     user_data[uid]["remove_footer_mode"] = True
+    save_data()
     bot.reply_to(m, "Footer Remove ON ✅")
 
 
-@bot.message_handler(func=lambda m: m.content_type == "text" and m.text == "❌ Footer Remove OFF")
+@bot.message_handler(func=lambda m: m.content_type == "text" and m.text == "✂️ Footer Remove OFF")
 def footer_remove_off(m):
     uid = m.from_user.id
     if not is_admin(uid):
@@ -750,6 +880,7 @@ def footer_remove_off(m):
 
     init_user(uid)
     user_data[uid]["remove_footer_mode"] = False
+    save_data()
     bot.reply_to(m, "Footer Remove OFF ❌")
 
 
@@ -760,7 +891,12 @@ def auto_forward_on(m):
         return
 
     init_user(uid)
+    if not user_data[uid]["selected_channels"]:
+        send_message_safe(m.chat.id, "ആദ്യം channel select ചെയ്യൂ ❌", reply_markup=channel_kb())
+        return
+
     user_data[uid]["auto_forward"] = True
+    save_data()
     bot.reply_to(m, "Auto Forward ON ✅")
 
 
@@ -772,6 +908,7 @@ def auto_forward_off(m):
 
     init_user(uid)
     user_data[uid]["auto_forward"] = False
+    save_data()
     bot.reply_to(m, "Auto Forward OFF ❌")
 
 
@@ -785,7 +922,7 @@ def select_channel(m):
         return
 
     init_user(uid)
-    bot.send_message(m.chat.id, "Channels select ചെയ്യൂ 👇", reply_markup=channel_kb())
+    send_message_safe(m.chat.id, "Channels select ചെയ്യൂ 👇", reply_markup=channel_kb())
 
 
 @bot.message_handler(func=lambda m: m.content_type == "text" and m.text in CHANNELS.keys())
@@ -799,10 +936,12 @@ def toggle_channel(m):
 
     if cid in user_data[uid]["selected_channels"]:
         user_data[uid]["selected_channels"].remove(cid)
-        bot.send_message(m.chat.id, f"{m.text} removed ❌", reply_markup=channel_kb())
+        save_data()
+        send_message_safe(m.chat.id, f"{m.text} removed ❌", reply_markup=channel_kb())
     else:
         user_data[uid]["selected_channels"].append(cid)
-        bot.send_message(m.chat.id, f"{m.text} added ✅", reply_markup=channel_kb())
+        save_data()
+        send_message_safe(m.chat.id, f"{m.text} added ✅", reply_markup=channel_kb())
 
 
 @bot.message_handler(func=lambda m: m.content_type == "text" and m.text == "✅ Done")
@@ -811,7 +950,7 @@ def done_channels(m):
     if not is_admin(uid):
         return
 
-    bot.send_message(m.chat.id, "Channels saved ✅", reply_markup=main_kb())
+    send_message_safe(m.chat.id, "Channels saved ✅", reply_markup=main_kb())
 
 
 @bot.message_handler(func=lambda m: m.content_type == "text" and m.text == "🗑 Clear Channels")
@@ -822,7 +961,8 @@ def clear_channels(m):
 
     init_user(uid)
     user_data[uid]["selected_channels"] = []
-    bot.send_message(m.chat.id, "Channels cleared ✅", reply_markup=channel_kb())
+    save_data()
+    send_message_safe(m.chat.id, "Channels cleared ✅", reply_markup=channel_kb())
 
 
 @bot.message_handler(func=lambda m: m.content_type == "text" and m.text == "⬅️ Back")
@@ -831,7 +971,7 @@ def back_btn(m):
     if not is_admin(uid):
         return
 
-    bot.send_message(m.chat.id, "Main menu ✅", reply_markup=main_kb())
+    send_message_safe(m.chat.id, "Main menu ✅", reply_markup=main_kb())
 
 
 # =========================
@@ -860,7 +1000,7 @@ def current_settings(m):
         f"Selected Thumb: {user_data[uid]['selected_thumb'] or 'None ❌'}\n\n"
         f"Selected Channels:\n{channel_text}"
     )
-    bot.send_message(m.chat.id, text, reply_markup=main_kb())
+    send_message_safe(m.chat.id, text, reply_markup=main_kb())
 
 
 # =========================
@@ -874,33 +1014,105 @@ def photo_handler(m):
 
     init_user(uid)
 
-    photo_id = m.photo[-1].file_id
-    caption = m.caption or ""
+    try:
+        photo_id = m.photo[-1].file_id
+        caption = m.caption or ""
 
-    if user_data[uid]["waiting_thumb"]:
-        slot = user_data[uid]["waiting_thumb"]
-        user_data[uid]["thumbs"][slot] = photo_id
-        user_data[uid]["waiting_thumb"] = None
-        user_data[uid]["thumb_action"] = None
-        bot.send_message(m.chat.id, f"{slot} saved ✅", reply_markup=main_kb())
+        if user_data[uid]["waiting_thumb"]:
+            slot = user_data[uid]["waiting_thumb"]
+            user_data[uid]["thumbs"][slot] = photo_id
+            user_data[uid]["waiting_thumb"] = None
+            user_data[uid]["thumb_action"] = None
+            save_data()
+            send_message_safe(m.chat.id, f"{slot} saved ✅", reply_markup=main_kb())
+            return
+
+        final_text = apply_processing(uid, caption)
+
+        send_photo_id = photo_id
+        if user_data[uid]["thumb_mode"]:
+            thumb = get_thumb(uid)
+            if thumb:
+                send_photo_id = thumb
+
+        send_photo_safe(m.chat.id, send_photo_id, caption=final_text, reply_markup=main_kb())
+        forward_to_channels_photo(uid, send_photo_id, final_text)
+
+    except Exception as e:
+        logging.error(f"Photo handler error: {e}")
+        send_message_safe(m.chat.id, "Photo process ചെയ്യാൻ പറ്റിയില്ല ❌", reply_markup=main_kb())
+
+
+# =========================
+# VIDEO HANDLER
+# =========================
+@bot.message_handler(content_types=["video"])
+def video_handler(m):
+    uid = m.from_user.id
+    if not is_admin(uid):
         return
 
-    final_text = apply_processing(uid, caption)
+    init_user(uid)
 
-    send_photo_id = photo_id
-    if user_data[uid]["thumb_mode"]:
-        thumb = get_thumb(uid)
-        if thumb:
-            send_photo_id = thumb
+    try:
+        video_id = m.video.file_id
+        caption = m.caption or ""
+        final_text = apply_processing(uid, caption)
 
-    bot.send_photo(
-        m.chat.id,
-        send_photo_id,
-        caption=safe_caption(final_text),
-        reply_markup=main_kb()
-    )
+        send_video_safe(m.chat.id, video_id, caption=final_text, reply_markup=main_kb())
+        forward_to_channels_video(uid, video_id, final_text)
 
-    forward_to_channels_photo(uid, send_photo_id, safe_caption(final_text))
+    except Exception as e:
+        logging.error(f"Video handler error: {e}")
+        send_message_safe(m.chat.id, "Video process ചെയ്യാൻ പറ്റിയില്ല ❌", reply_markup=main_kb())
+
+
+# =========================
+# DOCUMENT HANDLER
+# =========================
+@bot.message_handler(content_types=["document"])
+def document_handler(m):
+    uid = m.from_user.id
+    if not is_admin(uid):
+        return
+
+    init_user(uid)
+
+    try:
+        doc_id = m.document.file_id
+        caption = m.caption or ""
+        final_text = apply_processing(uid, caption)
+
+        send_document_safe(m.chat.id, doc_id, caption=final_text, reply_markup=main_kb())
+        forward_to_channels_document(uid, doc_id, final_text)
+
+    except Exception as e:
+        logging.error(f"Document handler error: {e}")
+        send_message_safe(m.chat.id, "Document process ചെയ്യാൻ പറ്റിയില്ല ❌", reply_markup=main_kb())
+
+
+# =========================
+# ANIMATION HANDLER
+# =========================
+@bot.message_handler(content_types=["animation"])
+def animation_handler(m):
+    uid = m.from_user.id
+    if not is_admin(uid):
+        return
+
+    init_user(uid)
+
+    try:
+        anim_id = m.animation.file_id
+        caption = m.caption or ""
+        final_text = apply_processing(uid, caption)
+
+        send_animation_safe(m.chat.id, anim_id, caption=final_text, reply_markup=main_kb())
+        forward_to_channels_animation(uid, anim_id, final_text)
+
+    except Exception as e:
+        logging.error(f"Animation handler error: {e}")
+        send_message_safe(m.chat.id, "Animation process ചെയ്യാൻ പറ്റിയില്ല ❌", reply_markup=main_kb())
 
 
 # =========================
@@ -916,13 +1128,13 @@ def text_handler(m):
 
     ignore = {
         "📸 Set Thumb", "✅ Use Thumb",
-        "🖼 Thumb ON", "❌ Thumb OFF",
-        "🔗 Arrange ON", "🚫 Arrange OFF",
-        "🧲 Keep Text ON", "❌ Keep Text OFF",
-        "📝 Text Edit ON", "❎ Text Edit OFF",
-        "🎯 Middle ON", "🛑 Middle OFF",
-        "🧹 Header Remove ON", "🚫 Header Remove OFF",
-        "✂️ Footer Remove ON", "❌ Footer Remove OFF",
+        "🖼 Thumb ON", "🖼 Thumb OFF",
+        "🔗 Arrange ON", "🔗 Arrange OFF",
+        "🧲 Keep Text ON", "🧲 Keep Text OFF",
+        "📝 Text Edit ON", "📝 Text Edit OFF",
+        "🎯 Middle ON", "🎯 Middle OFF",
+        "🧹 Header Remove ON", "🧹 Header Remove OFF",
+        "✂️ Footer Remove ON", "✂️ Footer Remove OFF",
         "📢 Select Channel",
         "🟢 Auto Forward ON", "🔴 Auto Forward OFF",
         "👁 Current Thumb", "📊 Current Settings",
@@ -934,30 +1146,44 @@ def text_handler(m):
     if m.text in ignore:
         return
 
-    final_text = apply_processing(uid, m.text)
+    try:
+        final_text = apply_processing(uid, m.text)
 
-    if user_data[uid]["thumb_mode"]:
-        thumb = get_thumb(uid)
-        if thumb:
-            bot.send_photo(
-                m.chat.id,
-                thumb,
-                caption=safe_caption(final_text),
-                reply_markup=main_kb()
-            )
-            forward_to_channels_photo(uid, thumb, safe_caption(final_text))
-            return
+        if user_data[uid]["thumb_mode"]:
+            thumb = get_thumb(uid)
+            if thumb:
+                send_photo_safe(m.chat.id, thumb, caption=final_text, reply_markup=main_kb())
+                forward_to_channels_photo(uid, thumb, final_text)
+                return
 
-    bot.send_message(
-        m.chat.id,
-        safe_text(final_text) if final_text else "Empty text ❌",
-        reply_markup=main_kb()
-    )
+        send_message_safe(
+            m.chat.id,
+            final_text if final_text else "Empty text ❌",
+            reply_markup=main_kb()
+        )
 
-    if final_text:
-        forward_to_channels_text(uid, safe_text(final_text))
+        if final_text:
+            forward_to_channels_text(uid, final_text)
+
+    except Exception as e:
+        logging.error(f"Text handler error: {e}")
+        send_message_safe(m.chat.id, "Text process ചെയ്യാൻ പറ്റിയില്ല ❌", reply_markup=main_kb())
 
 
-print("Bot running...")
-bot.remove_webhook()
-bot.infinity_polling(skip_pending=True, none_stop=True)
+# =========================
+# FALLBACK ERROR HANDLER
+# =========================
+def run_bot():
+    while True:
+        try:
+            logging.info("Bot running...")
+            bot.remove_webhook()
+            bot.infinity_polling(skip_pending=True, timeout=30, long_polling_timeout=30)
+        except Exception as e:
+            logging.error(f"Polling crash: {e}")
+            time.sleep(5)
+
+
+if __name__ == "__main__":
+    load_data()
+    run_bot()
