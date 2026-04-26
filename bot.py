@@ -165,7 +165,10 @@ def has_malayalam(text):
 
 
 def only_symbols_or_emoji(line):
-    return bool(re.fullmatch(r"[\W_🔥💥⚜️❤️✅🥰😍😘💎✨⭐🎉💯😂🤣🙏👉📌📍📢•○●◇◆■□~`|]+", line or ""))
+    return bool(re.fullmatch(
+        r"[\W_🔥💥⚜️❤️✅🥰😍😘💎✨⭐🎉💯😂🤣🙏👉📌📍📢•○●◇◆■□~`|]+",
+        line or ""
+    ))
 
 
 def build_links(links):
@@ -173,7 +176,7 @@ def build_links(links):
     result = []
 
     for i, link in enumerate(links, 1):
-        result.append(f"Video {i}\n{link}")
+        result.append(f"Video {i} 👇\n\n{link}")
 
     return "\n\n".join(result).strip()
 
@@ -419,16 +422,12 @@ def start(m):
     send_message_safe(
         m.chat.id,
         "🔥 CLEAN VIP BOT READY ✅\n\n"
-        "✅ Arrange Mode\n"
-        "✅ Text Edit Mode\n"
-        "✅ Middle Mode\n"
-        "✅ Thumb Mode\n"
-        "✅ Auto Forward\n\n"
-        "Link format:\n"
-        "Video 1\n"
-        "link\n\n"
-        "Video 2\n"
-        "link",
+        "Text Edit Format:\n"
+        "Caption\n\n"
+        "Video 1 👇\n\n"
+        "Link\n\n"
+        "Video 2 👇\n\n"
+        "Link",
         reply_markup=main_kb()
     )
 
@@ -442,7 +441,6 @@ def set_thumb(m):
     init_user(uid)
     user_data[uid]["thumb_action"] = "set"
     save_data()
-
     send_message_safe(m.chat.id, "Save ചെയ്യാൻ slot select ചെയ്യൂ", reply_markup=slot_kb())
 
 
@@ -455,7 +453,6 @@ def use_thumb(m):
     init_user(uid)
     user_data[uid]["thumb_action"] = "use"
     save_data()
-
     send_message_safe(m.chat.id, "Use ചെയ്യാൻ slot select ചെയ്യൂ", reply_markup=slot_kb())
 
 
@@ -659,7 +656,6 @@ def clear_channels(m):
     init_user(uid)
     user_data[uid]["selected_channels"] = []
     save_data()
-
     send_message_safe(m.chat.id, "Channels cleared ✅", reply_markup=channel_kb())
 
 
