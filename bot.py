@@ -63,13 +63,13 @@ def save_data():
         with data_lock:
             serializable = {str(k): v for k, v in user_data.items()}
 
-            with open(TEMP_FILE, "w", encoding="utf-8") as f:
-                json.dump(serializable, f, ensure_ascii=False, indent=2)
+        with open(TEMP_FILE, "w", encoding="utf-8") as f:
+            json.dump(serializable, f, ensure_ascii=False, indent=2)
 
-            if os.path.exists(DATA_FILE):
-                shutil.copyfile(DATA_FILE, BACKUP_FILE)
+        if os.path.exists(DATA_FILE):
+            shutil.copyfile(DATA_FILE, BACKUP_FILE)
 
-            os.replace(TEMP_FILE, DATA_FILE)
+        os.replace(TEMP_FILE, DATA_FILE)
 
     except Exception as e:
         logging.error(f"Save data error: {e}")
@@ -171,9 +171,12 @@ def only_symbols_or_emoji(line):
     ))
 
 
-# Arrange mode style
+# =========================
+# ARRANGE MODE STYLE
+# =========================
 def build_links(links):
     links = unique_keep_order(links)
+
     if not links:
         return ""
 
@@ -185,8 +188,12 @@ def build_links(links):
     return "\n\n".join(result).strip()
 
 
+# =========================
+# TEXT EDIT / MIDDLE MODE STYLE
+# =========================
 def build_links_simple(links):
     links = unique_keep_order(links)
+
     if not links:
         return ""
 
@@ -194,21 +201,6 @@ def build_links_simple(links):
 
     for i, link in enumerate(links, 1):
         result.append(f"VIDEO {i}\n{link}")
-
-    return "\n\n".join(result).strip()    result = ["FULL VIDEO 🌝🌸"    for i, link in enumerate(links, 1        result.append(f"VIDEO {i}\n\n{link}"    return "\n\n".join(result
-
-
-# Text Edit / Middle mode style
-def build_links_simple(links):
-    links = unique_keep_order(links)
-
-    if not links:
-        return ""
-
-    result = []
-
-    for i, link in enumerate(links, 1):
-        result.append(f"VIDEO {i}\n\n{link}")
 
     return "\n\n".join(result).strip()
 
@@ -314,7 +306,10 @@ def get_thumb(uid):
 
 
 def selected_channel_names(uid):
-    return [name for name, cid in CHANNELS.items() if cid in user_data[uid]["selected_channels"]]
+    return [
+        name for name, cid in CHANNELS.items()
+        if cid in user_data[uid]["selected_channels"]
+    ]
 
 
 def send_message_safe(chat_id, text, reply_markup=None):
@@ -350,9 +345,7 @@ def send_animation_safe(chat_id, animation, caption="", reply_markup=None):
         return bot.send_animation(chat_id, animation, caption=safe_caption(caption), reply_markup=reply_markup)
     except Exception as e:
         logging.error(f"Send animation error to {chat_id}: {e}")
-
-
-def report_forward_error(uid, channel_id, err):
+        def report_forward_error(uid, channel_id, err):
     send_message_safe(
         uid,
         f"⚠️ Forward failed\nChannel: {channel_id}\nError: {err}",
@@ -455,12 +448,12 @@ def start(m):
         m.chat.id,
         "🔥 CLEAN VIP BOT READY ✅\n\n"
         "Arrange:\n"
-        "FULL VIDEO\n\n"
-        "VIDEO 1\n\n"
+        "FULL VIDEO 🌝🌸\n\n"
+        "VIDEO 1\n"
         "link\n\n"
         "Text Edit:\n"
         "Caption\n\n"
-        "VIDEO 1\n\n"
+        "VIDEO 1\n"
         "link",
         reply_markup=main_kb()
     )
