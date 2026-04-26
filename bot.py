@@ -171,22 +171,34 @@ def only_symbols_or_emoji(line):
     ))
 
 
+# Arrange mode style
 def build_links(links):
     links = unique_keep_order(links)
 
     if not links:
         return ""
 
-    header = "FULL VIDEO 🌝🌸\n\n" + ("‎ " * 45) + "\n\n"
+    result = ["FULL VIDEO"]
 
-    if len(links) == 1:
-        return header + links[0]
-
-    result = []
     for i, link in enumerate(links, 1):
         result.append(f"VIDEO {i}\n\n{link}")
 
-    return header + "\n\n".join(result).strip()
+    return "\n\n".join(result).strip()
+
+
+# Text Edit / Middle mode style
+def build_links_simple(links):
+    links = unique_keep_order(links)
+
+    if not links:
+        return ""
+
+    result = []
+
+    for i, link in enumerate(links, 1):
+        result.append(f"VIDEO {i}\n\n{link}")
+
+    return "\n\n".join(result).strip()
 
 
 def clean_malayalam_text(text):
@@ -245,7 +257,7 @@ def text_edit(uid, text):
         parts.append("\n".join(mal_lines).strip())
 
     if links:
-        parts.append(build_links(links))
+        parts.append(build_links_simple(links))
 
     final = "\n\n".join(parts).strip()
 
@@ -274,7 +286,7 @@ def apply_processing(uid, text):
         if mal:
             parts.append("\n".join(mal))
         if links:
-            parts.append(build_links(links))
+            parts.append(build_links_simple(links))
 
         final = "\n\n".join(parts).strip()
         return safe_text(final if final else text.strip())
@@ -430,11 +442,13 @@ def start(m):
     send_message_safe(
         m.chat.id,
         "🔥 CLEAN VIP BOT READY ✅\n\n"
-        "Link Format:\n"
-        "FULL VIDEO 🌝🌸\n\n"
+        "Arrange:\n"
+        "FULL VIDEO\n\n"
         "VIDEO 1\n\n"
         "link\n\n"
-        "VIDEO 2\n\n"
+        "Text Edit:\n"
+        "Caption\n\n"
+        "VIDEO 1\n\n"
         "link",
         reply_markup=main_kb()
     )
